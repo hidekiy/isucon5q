@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -252,14 +253,6 @@ func render(w http.ResponseWriter, r *http.Request, status int, file string, dat
 			return s
 		},
 		"split": strings.Split,
-		"getEntry": func(id int) Entry {
-			row := db.QueryRow(`SELECT * FROM entries WHERE id=?`, id)
-			var entryID, userID, private int
-			var body string
-			var createdAt time.Time
-			checkErr(row.Scan(&entryID, &userID, &private, &body, &createdAt))
-			return Entry{id, userID, private == 1, strings.SplitN(body, "\n", 2)[0], strings.SplitN(body, "\n", 2)[1], createdAt}
-		},
 		"numComments": func(id int) int {
 			row := db.QueryRow(`SELECT COUNT(*) AS c FROM comments WHERE entry_id = ?`, id)
 			var n int
@@ -353,17 +346,16 @@ LIMIT 10`, user.ID)
 	}
 	rows.Close()
 
-	rows, err = db.Query(`SELECT c.* FROM (SELECT * FROM comments ORDER BY created_at DESC LIMIT 1000) c WHERE EXISTS (SELECT 1 FROM relations WHERE one = c.user_id AND another = ?) AND EXISTS (SELECT 1 FROM entries e WHERE e.id = c.entry_id AND (e.private = 0 OR EXISTS (SELECT 1 FROM relations WHERE one = e.user_id AND another = ?))) LIMIT 10`, userIDMe, userIDMe)
+	rows, err = db.Query(`SELECT c.*, (SELECT user_id FROM entries WHERE id = c.entry_id) AS entry_owner_id FROM (SELECT * FROM comments ORDER BY created_at DESC LIMIT 1000) c WHERE EXISTS (SELECT 1 FROM relations WHERE one = c.user_id AND another = ?) AND EXISTS (SELECT 1 FROM entries e WHERE e.id = c.entry_id AND (e.private = 0 OR EXISTS (SELECT 1 FROM relations WHERE one = e.user_id AND another = ?))) LIMIT 10`, userIDMe, userIDMe)
 	if err != sql.ErrNoRows {
 		checkErr(err)
 	}
 	commentsOfFriends := make([]FriendComment, 0, 10)
 	for rows.Next() {
 		var c FriendComment
-		// var entryOwnerID int
-		checkErr(rows.Scan(&c.ID, &c.EntryID, &c.UserID, &c.Comment, &c.CreatedAt))
-		// checkErr(rows.Scan(&c.ID, &c.EntryID, &c.UserID, &c.Comment, &c.CreatedAt, &entryOwnerID))
-		// c.EntryOwner = getUser(w, entryOwnerID)
+		var entryOwnerID int
+		checkErr(rows.Scan(&c.ID, &c.EntryID, &c.UserID, &c.Comment.Comment, &c.CreatedAt, &entryOwnerID))
+		c.EntryOwner = getUser(w, entryOwnerID)
 		commentsOfFriends = append(commentsOfFriends, c)
 		if len(commentsOfFriends) >= 10 {
 			break
@@ -765,6 +757,7 @@ func main() {
 
 func checkErr(err error) {
 	if err != nil {
+		debug.PrintStack()
 		panic(err)
 	}
 }
