@@ -387,15 +387,7 @@ LIMIT 10`, user.ID)
 		var id, one, another int
 		var createdAt time.Time
 		checkErr(rows.Scan(&id, &one, &another, &createdAt))
-		var friendID int
-		if one == user.ID {
-			friendID = another
-		} else {
-			friendID = one
-		}
-		if _, ok := friendsMap[friendID]; !ok {
-			friendsMap[friendID] = createdAt
-		}
+		friendsMap[another] = createdAt
 	}
 	friends := make([]Friend, 0, len(friendsMap))
 	for key, val := range friendsMap {
