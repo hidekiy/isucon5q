@@ -21,10 +21,11 @@ import (
 import _ "net/http/pprof"
 
 var (
-	db    *sql.DB
-	store *sessions.CookieStore
-	users map[int]*User
-	salts map[int]string
+	db                 *sql.DB
+	store              *sessions.CookieStore
+	users              map[int]*User
+	usersByAccountName map[string]*User
+	salts              map[int]string
 )
 
 type User struct {
@@ -106,23 +107,17 @@ WHERE u.email = ? AND u.passhash = SHA2(CONCAT(?, s.salt), 512)`
 func getCurrentUser(w http.ResponseWriter, r *http.Request) *User {
 	u := context.Get(r, "user")
 	if u != nil {
-		user := u.(User)
-		return &user
+		user := u.(*User)
+		return user
 	}
 	session := getSession(w, r)
 	userID, ok := session.Values["user_id"]
 	if !ok || userID == nil {
 		return nil
 	}
-	row := db.QueryRow(`SELECT id, account_name, nick_name, email FROM users WHERE id=?`, userID)
-	user := User{}
-	err := row.Scan(&user.ID, &user.AccountName, &user.NickName, &user.Email)
-	if err == sql.ErrNoRows {
-		checkErr(ErrAuthentication)
-	}
-	checkErr(err)
+	user := getUser(w, userID.(int))
 	context.Set(r, "user", user)
-	return &user
+	return user
 }
 
 func authenticated(w http.ResponseWriter, r *http.Request) bool {
@@ -143,14 +138,11 @@ func getUser(w http.ResponseWriter, userID int) *User {
 }
 
 func getUserFromAccount(w http.ResponseWriter, name string) *User {
-	row := db.QueryRow(`SELECT * FROM users WHERE account_name = ?`, name)
-	user := User{}
-	err := row.Scan(&user.ID, &user.AccountName, &user.NickName, &user.Email, new(string))
-	if err == sql.ErrNoRows {
+	user := usersByAccountName[name]
+	if user == nil {
 		checkErr(ErrContentNotFound)
 	}
-	checkErr(err)
-	return &user
+	return user
 }
 
 func isFriend(w http.ResponseWriter, r *http.Request, anotherID int) bool {
@@ -318,7 +310,8 @@ func GetIndex(w http.ResponseWriter, r *http.Request) {
 		var body string
 		var createdAt time.Time
 		checkErr(rows.Scan(&id, &userID, &private, &body, &createdAt))
-		entries = append(entries, Entry{id, userID, private == 1, strings.SplitN(body, "\n", 2)[0], strings.SplitN(body, "\n", 2)[1], createdAt})
+		bodySpl := strings.SplitN(body, "\n", 2)
+		entries = append(entries, Entry{id, userID, private == 1, bodySpl[0], bodySpl[1], createdAt})
 	}
 	rows.Close()
 
@@ -350,7 +343,8 @@ LIMIT 10`, user.ID)
 		var body string
 		var createdAt time.Time
 		checkErr(rows.Scan(&id, &userID, &private, &body, &createdAt))
-		entriesOfFriends = append(entriesOfFriends, Entry{id, userID, private == 1, strings.SplitN(body, "\n", 2)[0], strings.SplitN(body, "\n", 2)[1], createdAt})
+		bodySpl := strings.SplitN(body, "\n", 2)
+		entriesOfFriends = append(entriesOfFriends, Entry{id, userID, private == 1, bodySpl[0], bodySpl[1], createdAt})
 	}
 	rows.Close()
 
@@ -377,15 +371,15 @@ LIMIT 10`, user.ID)
 	}
 	rows.Close()
 
-	rows, err = db.Query(`SELECT * FROM relations WHERE one = ? ORDER BY created_at DESC`, user.ID)
+	rows, err = db.Query(`SELECT another, created_at FROM relations WHERE one = ? ORDER BY created_at DESC`, user.ID)
 	if err != sql.ErrNoRows {
 		checkErr(err)
 	}
 	friendsMap := make(map[int]time.Time)
 	for rows.Next() {
-		var id, one, another int
+		var another int
 		var createdAt time.Time
-		checkErr(rows.Scan(&id, &one, &another, &createdAt))
+		checkErr(rows.Scan(&another, &createdAt))
 		friendsMap[another] = createdAt
 	}
 	friends := make([]Friend, 0, len(friendsMap))
@@ -454,7 +448,8 @@ func GetProfile(w http.ResponseWriter, r *http.Request) {
 		var body string
 		var createdAt time.Time
 		checkErr(rows.Scan(&id, &userID, &private, &body, &createdAt))
-		entry := Entry{id, userID, private == 1, strings.SplitN(body, "\n", 2)[0], strings.SplitN(body, "\n", 2)[1], createdAt}
+		bodySpl := strings.SplitN(body, "\n", 2)
+		entry := Entry{id, userID, private == 1, bodySpl[0], bodySpl[1], createdAt}
 		entries = append(entries, entry)
 	}
 	rows.Close()
@@ -691,12 +686,14 @@ func PostFriends(w http.ResponseWriter, r *http.Request) {
 
 func initUsers() {
 	users = make(map[int]*User)
+	usersByAccountName = make(map[string]*User)
 	rows, err := db.Query(`SELECT * FROM users`)
 	checkErr(err)
 	for rows.Next() {
 		var user User
 		checkErr(rows.Scan(&user.ID, &user.AccountName, &user.NickName, &user.Email, new(string)))
 		users[user.ID] = &user
+		usersByAccountName[user.AccountName] = &user
 	}
 	rows.Close()
 }
