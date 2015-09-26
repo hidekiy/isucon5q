@@ -62,6 +62,11 @@ type Comment struct {
 	CreatedAt time.Time
 }
 
+type FriendComment struct {
+	Comment
+	EntryOwner *User
+}
+
 type Friend struct {
 	ID        int
 	CreatedAt time.Time
@@ -352,10 +357,13 @@ LIMIT 10`, user.ID)
 	if err != sql.ErrNoRows {
 		checkErr(err)
 	}
-	commentsOfFriends := make([]Comment, 0, 10)
+	commentsOfFriends := make([]FriendComment, 0, 10)
 	for rows.Next() {
-		var c Comment
+		var c FriendComment
+		// var entryOwnerID int
 		checkErr(rows.Scan(&c.ID, &c.EntryID, &c.UserID, &c.Comment, &c.CreatedAt))
+		// checkErr(rows.Scan(&c.ID, &c.EntryID, &c.UserID, &c.Comment, &c.CreatedAt, &entryOwnerID))
+		// c.EntryOwner = getUser(w, entryOwnerID)
 		commentsOfFriends = append(commentsOfFriends, c)
 		if len(commentsOfFriends) >= 10 {
 			break
@@ -391,7 +399,7 @@ LIMIT 10`, user.ID)
 		Entries           []Entry
 		CommentsForMe     []Comment
 		EntriesOfFriends  []Entry
-		CommentsOfFriends []Comment
+		CommentsOfFriends []FriendComment
 		FriendCount       int
 		Footprints        []Footprint
 	}{
