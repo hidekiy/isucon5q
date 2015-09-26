@@ -23,6 +23,8 @@ import _ "net/http/pprof"
 var (
 	db    *sql.DB
 	store *sessions.CookieStore
+	users map[int]*User
+	salts map[int]string
 )
 
 type User struct {
@@ -133,14 +135,11 @@ func authenticated(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func getUser(w http.ResponseWriter, userID int) *User {
-	row := db.QueryRow(`SELECT * FROM users WHERE id = ?`, userID)
-	user := User{}
-	err := row.Scan(&user.ID, &user.AccountName, &user.NickName, &user.Email, new(string))
-	if err == sql.ErrNoRows {
+	user := users[userID]
+	if user == nil {
 		checkErr(ErrContentNotFound)
 	}
-	checkErr(err)
-	return &user
+	return user
 }
 
 func getUserFromAccount(w http.ResponseWriter, name string) *User {
@@ -690,11 +689,24 @@ func PostFriends(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func initUsers() {
+	users = make(map[int]*User)
+	rows, err := db.Query(`SELECT * FROM users`)
+	checkErr(err)
+	for rows.Next() {
+		var user User
+		checkErr(rows.Scan(&user.ID, &user.AccountName, &user.NickName, &user.Email, new(string)))
+		users[user.ID] = &user
+	}
+	rows.Close()
+}
+
 func GetInitialize(w http.ResponseWriter, r *http.Request) {
 	db.Exec("DELETE FROM relations WHERE id > 500000")
 	db.Exec("DELETE FROM footprints WHERE id > 500000")
 	db.Exec("DELETE FROM entries WHERE id > 500000")
 	db.Exec("DELETE FROM comments WHERE id > 1500000")
+	initUsers()
 }
 
 func main() {
@@ -762,6 +774,8 @@ func main() {
 	go func() {
 		log.Println(http.ListenAndServe("localhost:6060", nil))
 	}()
+	initUsers()
+
 	log.Fatal(http.ListenAndServe(":8080", r))
 }
 
