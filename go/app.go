@@ -348,7 +348,7 @@ LIMIT 10`, user.ID)
 	}
 	rows.Close()
 
-	rows, err = db.Query(`SELECT * FROM (SELECT * FROM comments ORDER BY created_at DESC LIMIT 1000) c WHERE EXISTS (SELECT 1 FROM relations WHERE one = c.user_id AND another = ?) LIMIT 1000`, userIDMe)
+	rows, err = db.Query(`SELECT c.* FROM (SELECT * FROM comments ORDER BY created_at DESC LIMIT 1000) c WHERE EXISTS (SELECT 1 FROM relations WHERE one = c.user_id AND another = ?) AND EXISTS (SELECT 1 FROM entries e WHERE e.id = c.entry_id AND (e.private = 0 OR EXISTS (SELECT 1 FROM relations WHERE one = e.user_id AND another = ?))) LIMIT 10`, userIDMe, userIDMe)
 	if err != sql.ErrNoRows {
 		checkErr(err)
 	}
@@ -356,14 +356,6 @@ LIMIT 10`, user.ID)
 	for rows.Next() {
 		var c Comment
 		checkErr(rows.Scan(&c.ID, &c.EntryID, &c.UserID, &c.Comment, &c.CreatedAt))
-		row := db.QueryRow(`SELECT user_id, private FROM entries WHERE id = ?`, c.EntryID)
-		var userID, private int
-		checkErr(row.Scan(&userID, &private))
-		if private == 1 {
-			if !permitted(w, r, userID) {
-				continue
-			}
-		}
 		commentsOfFriends = append(commentsOfFriends, c)
 		if len(commentsOfFriends) >= 10 {
 			break
@@ -703,7 +695,6 @@ func GetInitialize(w http.ResponseWriter, r *http.Request) {
 	db.Exec("DELETE FROM footprints WHERE id > 500000")
 	db.Exec("DELETE FROM entries WHERE id > 500000")
 	db.Exec("DELETE FROM comments WHERE id > 1500000")
-	initUsers()
 }
 
 func main() {
