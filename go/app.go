@@ -55,6 +55,11 @@ type Entry struct {
 	CreatedAt time.Time
 }
 
+type ListEntry struct {
+	Entry
+	NumComments int
+}
+
 type Comment struct {
 	ID        int
 	EntryID   int
@@ -478,21 +483,31 @@ func ListEntries(w http.ResponseWriter, r *http.Request) {
 	owner := getUserFromAccount(w, account)
 	var query string
 	if permitted(w, r, owner.ID) {
-		query = `SELECT e2.* FROM (SELECT id FROM entries WHERE user_id = ? ORDER BY created_at DESC LIMIT 20) e1, entries e2 WHERE e1.id = e2.id`
+		query = `SELECT e2.*, (SELECT COUNT(*) AS c FROM comments WHERE entry_id = e2.id) AS num_comments FROM (SELECT id FROM entries WHERE user_id = ? ORDER BY created_at DESC LIMIT 20) e1, entries e2 WHERE e1.id = e2.id`
 	} else {
-		query = `SELECT e2.* FROM (SELECT id FROM entries WHERE user_id = ? AND private=0 ORDER BY created_at DESC LIMIT 20) e1, entries e2 WHERE e1.id = e2.id`
+		query = `SELECT e2.*, (SELECT COUNT(*) AS c FROM comments WHERE entry_id = e2.id) AS num_comments FROM (SELECT id FROM entries WHERE user_id = ? AND private=0 ORDER BY created_at DESC LIMIT 20) e1, entries e2 WHERE e1.id = e2.id`
 	}
 	rows, err := db.Query(query, owner.ID)
 	if err != sql.ErrNoRows {
 		checkErr(err)
 	}
-	entries := make([]Entry, 0, 20)
+	entries := make([]ListEntry, 0, 20)
 	for rows.Next() {
-		var id, userID, private int
+		var id, userID, private, numComments int
 		var body string
 		var createdAt time.Time
-		checkErr(rows.Scan(&id, &userID, &private, &body, &createdAt))
-		entry := Entry{id, userID, private == 1, strings.SplitN(body, "\n", 2)[0], strings.SplitN(body, "\n", 2)[1], createdAt}
+		checkErr(rows.Scan(&id, &userID, &private, &body, &createdAt, &numComments))
+		entry := ListEntry{
+			Entry: Entry{
+				ID:        id,
+				UserID:    userID,
+				Private:   private == 1,
+				Title:     strings.SplitN(body, "\n", 2)[0],
+				Content:   strings.SplitN(body, "\n", 2)[1],
+				CreatedAt: createdAt,
+			},
+			NumComments: numComments,
+		}
 		entries = append(entries, entry)
 	}
 	rows.Close()
@@ -501,7 +516,7 @@ func ListEntries(w http.ResponseWriter, r *http.Request) {
 
 	render(w, r, http.StatusOK, "entries.html", struct {
 		Owner   *User
-		Entries []Entry
+		Entries []ListEntry
 		Myself  bool
 	}{owner, entries, getCurrentUser(w, r).ID == owner.ID})
 }
