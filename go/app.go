@@ -18,6 +18,8 @@ import (
 	"time"
 )
 
+import _ "net/http/pprof"
+
 var (
 	db    *sql.DB
 	store *sessions.CookieStore
@@ -353,25 +355,19 @@ LIMIT 10`, user.ID)
 	}
 	rows.Close()
 
-	rows, err = db.Query(`SELECT * FROM comments ORDER BY created_at DESC LIMIT 1000`)
+	rows, err = db.Query(`SELECT * FROM (SELECT * FROM comments ORDER BY created_at DESC LIMIT 1000) c WHERE EXISTS (SELECT 1 FROM relations WHERE one = c.user_id AND another = ?) LIMIT 1000`, userIDMe)
 	if err != sql.ErrNoRows {
 		checkErr(err)
 	}
 	commentsOfFriends := make([]Comment, 0, 10)
 	for rows.Next() {
-		c := Comment{}
+		var c Comment
 		checkErr(rows.Scan(&c.ID, &c.EntryID, &c.UserID, &c.Comment, &c.CreatedAt))
-		if !isFriend(w, r, c.UserID) {
-			continue
-		}
-		row := db.QueryRow(`SELECT * FROM entries WHERE id = ?`, c.EntryID)
-		var id, userID, private int
-		var body string
-		var createdAt time.Time
-		checkErr(row.Scan(&id, &userID, &private, &body, &createdAt))
-		entry := Entry{id, userID, private == 1, strings.SplitN(body, "\n", 2)[0], strings.SplitN(body, "\n", 2)[1], createdAt}
-		if entry.Private {
-			if !permitted(w, r, entry.UserID) {
+		row := db.QueryRow(`SELECT user_id, private FROM entries WHERE id = ?`, c.EntryID)
+		var userID, private int
+		checkErr(row.Scan(&userID, &private))
+		if private == 1 {
+			if !permitted(w, r, userID) {
 				continue
 			}
 		}
@@ -382,7 +378,7 @@ LIMIT 10`, user.ID)
 	}
 	rows.Close()
 
-	rows, err = db.Query(`SELECT * FROM relations WHERE one = ? OR another = ? ORDER BY created_at DESC`, user.ID, user.ID)
+	rows, err = db.Query(`SELECT * FROM relations WHERE one = ? ORDER BY created_at DESC`, user.ID)
 	if err != sql.ErrNoRows {
 		checkErr(err)
 	}
@@ -770,6 +766,10 @@ func main() {
 	r.HandleFunc("/initialize", myHandler(GetInitialize))
 	r.HandleFunc("/", myHandler(GetIndex))
 	r.PathPrefix("/").Handler(http.FileServer(http.Dir("../static")))
+
+	go func() {
+		log.Println(http.ListenAndServe("localhost:6060", nil))
+	}()
 	log.Fatal(http.ListenAndServe(":8080", r))
 }
 
